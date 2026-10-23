@@ -1,4 +1,45 @@
-> **Branch `seventeen`:** the ROM port of Specter (no root) is described in [`rom/NOTICE.md`](rom/NOTICE.md).
+# Specter — ROM port for PixelOS 17.0 (branch `seventeen`)
+
+This branch is a fork of [dpejoh/specter](https://github.com/dpejoh/specter) with Specter ported to
+**PixelOS 17.0** (Android 17) as a settings page of the ROM, **without root, KernelSU, a module or shell
+scripts**. The module itself (`src/`, `scripts/`, `config/`) is kept as upstream; the port is in
+[`rom/`](rom), described in [`rom/NOTICE.md`](rom/NOTICE.md).
+
+## What the port does
+
+The page *Settings > Advanced features > Experimental features > Integrity > Specter* runs the same
+update pass as `action.sh`, from the Play Integrity Fix app of the ROM:
+
+1. restarts Google Play services and the Play Store (optionally clears the Play Store data);
+2. keeps them among the target apps of the keybox service;
+3. sets the security patch from the profile, the device, the security bulletin, a synthetic date or a
+   date you enter;
+4. checks the keybox against Google's revocation list and takes one from the online catalog or a URL;
+5. fetches the profile of a preferred or random Pixel device from the `bot` branch of
+   [KOWX712/PlayIntegrityFix](https://github.com/KOWX712/PlayIntegrityFix), skipping blocked devices;
+6. optionally turns off developer options and USB debugging (off by default).
+
+A change of the device, the patch source, the keybox provider or the targets is propagated to the Play
+Integrity Fix and TEESimulator pages. The pass runs once after the first boot or a reset, then every 6,
+12 or 24 hours, and on *Update now*. The main switch is `Settings.Global lenovo_specter` (on unless 0).
+
+## Requirements on the ROM
+
+The code lives in the Play Integrity Fix app (`io.github.wnduddld0513.pif`), so everything in the
+[`PlayIntegrityFix` README](https://github.com/wnduddld0513/PlayIntegrityFix/tree/seventeen#requirements-on-the-rom-pixelos-170--android-17)
+applies: the `frameworks/base` hooks and `KeyboxAttestationService`, the SELinux type of the service, and
+`PRODUCT_PACKAGES += PlayIntegrityFixSettings`. Build it as described there.
+
+The app needs the privileged permissions `WRITE_SECURE_SETTINGS`, `FORCE_STOP_PACKAGES` and
+`CLEAR_APP_USER_DATA` (`privapp-permissions-pif.xml`).
+
+## License
+
+GPL-3.0, like upstream (see [`LICENSE`](LICENSE)).
+
+---
+
+## Upstream: Specter
 
 # Specter
 
