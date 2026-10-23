@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Play Integrity Fix (inject-s) - ROM integration
+     Copyright (C) 2026 wnduddld0513
+     SPDX-License-Identifier: GPL-3.0-only
+
+     The Specter page: the update pipeline, the Play Integrity Fix devices, the keybox
+     source, target apps, security patch source, apply, ADB and the ROM fingerprint. The
+     preferences with a default are stored in the "specter" preferences under their key.
+-->
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    android:title="@string/specter_title">
+
+    <com.android.settingslib.widget.MainSwitchPreference
+        android:key="specter_enabled"
+        android:title="@string/specter_main_switch"
+        android:persistent="false" />
+
+    <PreferenceCategory
+        android:key="specter_sync"
+        android:title="@string/specter_sync_category">
+
+        <SwitchPreferenceCompat
+            android:key="specter_auto"
+            android:title="@string/specter_auto_title"
+            android:summary="@string/specter_auto_summary"
+            android:persistent="false" />
+
+        <ListPreference
+            android:key="interval_hours"
+            android:title="@string/interval_title"
+            android:entries="@array/interval_entries"
+            android:entryValues="@array/interval_values"
+            android:defaultValue="12"
+            android:summary="%s" />
+
+        <Preference
+            android:key="specter_update_now"
+            android:title="@string/specter_update_now_title"
+            android:summary="@string/specter_update_now_summary" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_steps"
+        android:title="@string/steps_category">
+
+        <SwitchPreferenceCompat
+            android:key="step_gms"
+            android:title="@string/step_gms_title"
+            android:summary="@string/step_gms_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="step_targets"
+            android:title="@string/step_targets_title"
+            android:summary="@string/step_targets_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="step_patch"
+            android:title="@string/step_patch_title"
+            android:summary="@string/step_patch_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="step_keybox"
+            android:title="@string/step_keybox_title"
+            android:summary="@string/step_keybox_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="step_pif"
+            android:title="@string/step_pif_title"
+            android:summary="@string/step_pif_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="gms_stop"
+            android:title="@string/gms_stop_title"
+            android:summary="@string/gms_stop_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="gms_clear"
+            android:title="@string/gms_clear_title"
+            android:summary="@string/gms_clear_summary"
+            android:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_pif"
+        android:title="@string/specter_pif_category">
+
+        <MultiSelectListPreference
+            android:key="pif_preferred"
+            android:title="@string/pif_preferred_title"
+            android:dialogTitle="@string/pif_preferred_title" />
+
+        <MultiSelectListPreference
+            android:key="pif_blocked"
+            android:title="@string/pif_blocked_title"
+            android:dialogTitle="@string/pif_blocked_title" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_keybox"
+        android:title="@string/keybox_category">
+
+        <ListPreference
+            android:key="keybox_provider"
+            android:title="@string/keybox_provider_title"
+            android:defaultValue="auto"
+            android:summary="%s" />
+
+        <Preference
+            android:key="keybox_url"
+            android:title="@string/keybox_url_title"
+            android:summary="@string/keybox_url_summary" />
+
+        <Preference
+            android:key="keybox_info"
+            android:title="@string/keybox_info_title"
+            android:selectable="false" />
+
+        <Preference
+            android:key="keybox_check"
+            android:title="@string/keybox_check_title"
+            android:summary="@string/keybox_check_summary" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_targets"
+        android:title="@string/targets_category">
+
+        <SwitchPreferenceCompat
+            android:key="target_auto"
+            android:title="@string/target_auto_title"
+            android:summary="@string/target_auto_summary"
+            android:persistent="false" />
+
+        <MultiSelectListPreference
+            android:key="target_exclude"
+            android:title="@string/target_exclude_title"
+            android:dialogTitle="@string/target_exclude_title" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_patch"
+        android:title="@string/patch_category">
+
+        <ListPreference
+            android:key="patch_source"
+            android:title="@string/patch_source_title"
+            android:entries="@array/patch_source_entries"
+            android:entryValues="@array/patch_source_values"
+            android:defaultValue="profile"
+            android:summary="%s" />
+
+        <SwitchPreferenceCompat
+            android:key="patch_src_device"
+            android:title="@string/patch_src_device_title"
+            android:summary="@string/patch_src_device_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="patch_src_bulletin"
+            android:title="@string/patch_src_bulletin_title"
+            android:summary="@string/patch_src_bulletin_summary"
+            android:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            android:key="patch_src_synthetic"
+            android:title="@string/patch_src_synthetic_title"
+            android:summary="@string/patch_src_synthetic_summary"
+            android:defaultValue="true" />
+
+        <Preference
+            android:key="patch_fetch"
+            android:title="@string/patch_fetch_title"
+            android:summary="@string/patch_fetch_summary" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_apply"
+        android:title="@string/apply_category">
+
+        <Preference
+            android:key="apply_now"
+            android:title="@string/apply_now_title"
+            android:summary="@string/apply_now_summary" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_adb"
+        android:title="@string/adb_category">
+
+        <SwitchPreferenceCompat
+            android:key="adb_dev"
+            android:title="@string/adb_dev_title"
+            android:summary="@string/adb_dev_summary"
+            android:defaultValue="false" />
+
+        <SwitchPreferenceCompat
+            android:key="adb_usb"
+            android:title="@string/adb_usb_title"
+            android:summary="@string/adb_usb_summary"
+            android:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="specter_rom"
+        android:title="@string/rom_category">
+
+        <Preference
+            android:key="rom_fingerprint"
+            android:title="@string/profile_fingerprint"
+            android:selectable="false" />
+
+        <Preference
+            android:key="rom_model"
+            android:title="@string/profile_model"
+            android:selectable="false" />
+
+        <Preference
+            android:key="rom_build_type"
+            android:title="@string/rom_build_type"
+            android:selectable="false" />
+
+        <Preference
+            android:key="rom_security_patch"
+            android:title="@string/profile_security_patch"
+            android:selectable="false" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>
