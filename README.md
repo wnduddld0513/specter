@@ -1,3 +1,5 @@
+> **Branch `seventeen`:** the ROM port of Specter (no root) is described in [`rom/NOTICE.md`](rom/NOTICE.md).
+
 # Specter
 
 <p align="center">
