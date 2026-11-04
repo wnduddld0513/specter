@@ -64,7 +64,7 @@ final class KeyboxStore {
     private static final String PREF_VERSION = "version";
 
     /** Read by the keybox service: unset or 1 is on; only 0 turns TEESimulator off. */
-    static final String TEE_SETTING = "lenovo_tee_simulator";
+    static final String TEE_SETTING = "tee_simulator";
 
     // Google's published list of revoked attestation keys
     private static final String REVOCATION_URL = "https://android.googleapis.com/attestation/status";

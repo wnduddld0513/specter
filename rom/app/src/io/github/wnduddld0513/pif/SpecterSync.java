@@ -36,7 +36,7 @@ import java.util.Set;
 
 final class SpecterSync {
     /** Unset or 1: Specter is on; only 0 turns it off. */
-    static final String SWITCH_SETTING = "lenovo_specter";
+    static final String SWITCH_SETTING = "specter";
 
     static final String PREFS = "specter";
     private static final String KEY_AUTO = "auto_update";

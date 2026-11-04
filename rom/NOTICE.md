@@ -14,6 +14,6 @@ the Specter files of that app.
 | `rom/app/res/xml/specter_settings.xml` | the layout of that page |
 | `rom/app/**/KeyboxStore.java` | the keybox provider catalog, the Google revocation check and the bulletin date (`features/keybox.sh`, `keybox_info.sh`); shared with the TEESimulator page |
 
-Settings keys: `Settings.Global lenovo_specter` (main switch, on unless 0). A change of the device,
+Settings keys: `Settings.Global specter` (main switch, on unless 0). A change of the device,
 the security patch source, the keybox provider or the targets is propagated to Play Integrity Fix and
 to TEESimulator by `SpecterSync`.

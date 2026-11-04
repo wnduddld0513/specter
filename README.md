@@ -21,7 +21,7 @@ update pass as `action.sh`, from the Play Integrity Fix app of the ROM:
 
 A change of the device, the patch source, the keybox provider or the targets is propagated to the Play
 Integrity Fix and TEESimulator pages. The pass runs once after the first boot or a reset, then every 6,
-12 or 24 hours, and on *Update now*. The main switch is `Settings.Global lenovo_specter` (on unless 0).
+12 or 24 hours, and on *Update now*. The main switch is `Settings.Global specter` (on unless 0).
 
 ## Requirements on the ROM
 
