@@ -1,9 +1,8 @@
 import { showToast } from './toast.js';
-import { getTranslation } from './i18n.js';
+import { t } from './i18n.js';
 import { exec, getDataDir } from './bridge.js';
-import { shellEscape } from './utils.js';
+import { afterPaint, shellEscape, wireRowActivation } from './utils.js';
 
-const t = (key: string, fallback: string): string => getTranslation(key) || fallback;
 
 export interface LogEntry {
   content: string;
@@ -75,11 +74,15 @@ async function fetchEntriesForTab(tab: LogTab): Promise<LogEntry[]> {
   return [...liveHistory];
 }
 
+let renderSeq = 0;
+
 async function renderCurrentLog() {
   if (!activeViewportEl) return;
+  const seq = ++renderSeq;
   activeViewportEl.innerHTML = '';
 
   const entries = await fetchEntriesForTab(currentLogType);
+  if (seq !== renderSeq || !activeViewportEl) return;
   if (entries.length === 0) {
     if (activeEmptyEl) activeEmptyEl.style.display = 'flex';
   } else {
@@ -131,7 +134,7 @@ export async function openLogsSubPage() {
     description: t('settings_logs_desc', 'View terminal output and execution logs'),
     headerAction: (container) => {
       container.innerHTML = `
-        <md-icon-button id="logs-refresh-btn" aria-label="${t('btn_refresh', 'Refresh')}">
+        <md-icon-button id="logs-refresh-btn" aria-label="${t('common_refresh', 'Refresh')}">
           <md-icon aria-hidden="true">refresh</md-icon>
         </md-icon-button>
         <md-icon-button id="logs-copy-btn" aria-label="${t('terminal_copy', 'Copy')}">
@@ -203,7 +206,10 @@ export async function openLogsSubPage() {
                 });
               });
 
-              renderCurrentLog().catch(console.error);
+              // Start the first log read only after the page has painted.
+              afterPaint(() => {
+                renderCurrentLog().catch(console.error);
+              }, 300);
             }
           }
         ]
@@ -219,14 +225,6 @@ export async function openLogsSubPage() {
 export function initTerminal() {
   const row = document.getElementById('row-logs');
   if (row) {
-    row.addEventListener('click', () => {
-      openLogsSubPage().catch(console.error);
-    });
-    row.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openLogsSubPage().catch(console.error);
-      }
-    });
+    wireRowActivation(row, () => { openLogsSubPage().catch(console.error); });
   }
 }

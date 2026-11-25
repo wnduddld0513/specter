@@ -1,34 +1,196 @@
 import { cfgGet, cfgSet } from './cfg.js';
-import { getTranslation } from './i18n.js';
-import { wireRowDialog } from './toggles.js';
+import { t } from './i18n.js';
 import { openSubPage } from './subpage.js';
-import { showToast } from './toast.js';
-import { exec, getModuleDir } from './bridge.js';
-import { shellEscape } from './utils.js';
+import { showToast, showLoadingToast, updateToast } from './toast.js';
+import { exec, getModuleDir, spawnCommand } from './bridge.js';
+import { afterPaint, escapeHtml, shellEscape } from './utils.js';
+import './ui/sp-skeleton.js';
 
-const t = (key: string, fallback: string): string => getTranslation(key) || fallback;
+
+/** Resolve after two frames, once the disabled FAB and toast have painted. */
+function afterNextPaint(): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame !== 'function') {
+      resolve();
+      return;
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
 
 export async function openBootHashSubpage() {
   const moddir = getModuleDir();
   const savedCustom = (await cfgGet('custom_boot_hash', '')) || '';
 
+  // Same pattern as target apps / security patch: the page opens with
+  // skeleton status rows, the shell is given a paint, and only then do the
+  // two status reads (a resetprop and a file read) run. The real rows
+  // replace the skeletons when both have landed.
   let activeHash = '';
-  try {
-    const { stdout } = await exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
-    activeHash = stdout.trim();
-  } catch {}
-
   let cachedHash = '';
-  try {
-    const { stdout } = await exec('cat /data/adb/specter/boot_hash 2>/dev/null || true');
-    cachedHash = stdout.trim();
-  } catch {}
+  let statusLoaded = false;
 
   let hashInputEl: HTMLInputElement | null = null;
   let activeHashEl: HTMLElement | null = null;
   let cacheHashEl: HTMLElement | null = null;
   let clearCacheBtn: HTMLElement | null = null;
+  let activeMount: HTMLElement | null = null;
+  let cacheMount: HTMLElement | null = null;
 
+  const renderSkeletonStatusRow = (container: HTMLElement): HTMLElement => {
+    container.closest('sp-settings-section')?.setAttribute('aria-hidden', 'true');
+
+    const row = document.createElement('sp-settings-row');
+    row.className = 'sp-skeleton-row';
+    row.setAttribute('variant', 'custom');
+
+    const icon = document.createElement('sp-skeleton');
+    icon.setAttribute('slot', 'leading');
+    icon.setAttribute('variant', 'circular');
+    icon.className = 'sp-skeleton-icon';
+    row.append(icon);
+
+    const headline = document.createElement('span');
+    headline.setAttribute('slot', 'headline');
+    const title = document.createElement('sp-skeleton');
+    title.setAttribute('variant', 'text');
+    title.className = 'sp-skeleton-title';
+    headline.append(title);
+    row.append(headline);
+
+    const supporting = document.createElement('span');
+    supporting.setAttribute('slot', 'supporting');
+    const description = document.createElement('sp-skeleton');
+    description.setAttribute('variant', 'text');
+    description.className = 'sp-skeleton-desc';
+    supporting.append(description);
+    row.append(supporting);
+
+    container.replaceWith(row);
+    return row;
+  };
+
+  const renderActiveStatus = (container: HTMLElement) => {
+    if (!statusLoaded) {
+      activeMount = renderSkeletonStatusRow(container);
+      return;
+    }
+
+    container.closest('sp-settings-section')?.removeAttribute('aria-hidden');
+    const row = document.createElement('sp-settings-row');
+    row.setAttribute('variant', 'custom');
+    row.setAttribute('headline', t('boot_hash_active_label', 'Active (ro.boot.vbmeta.digest)'));
+    const icon = document.createElement('md-icon');
+    icon.setAttribute('slot', 'icon');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = 'verified_user';
+    row.append(icon);
+    const value = document.createElement('span');
+    value.id = 'bh-active-val';
+    value.className = 'bh-mono bh-mono--block bh-mono--primary';
+    value.setAttribute('slot', 'supporting');
+    value.textContent = statusLoaded
+      ? (activeHash || t('boot_hash_active_empty', 'None'))
+      : t('common_loading', 'Loading...');
+    row.append(value);
+    container.replaceWith(row);
+    activeMount = row;
+    activeHashEl = value;
+  };
+
+  const renderCacheStatus = (container: HTMLElement) => {
+    if (!statusLoaded) {
+      cacheMount = renderSkeletonStatusRow(container);
+      return;
+    }
+
+    container.closest('sp-settings-section')?.removeAttribute('aria-hidden');
+    const row = document.createElement('sp-settings-row');
+    row.setAttribute('variant', 'custom');
+    row.setAttribute('stacked', '');
+    row.setAttribute('headline', t('boot_hash_cache_title', 'Cached Hash'));
+    const icon = document.createElement('md-icon');
+    icon.setAttribute('slot', 'icon');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = 'storage';
+    row.append(icon);
+    const value = document.createElement('span');
+    value.id = 'bh-cache-val';
+    value.className = 'bh-mono bh-mono--block';
+    value.setAttribute('slot', 'supporting');
+    value.textContent = statusLoaded
+      ? (cachedHash || t('boot_hash_cache_empty', 'None'))
+      : t('common_loading', 'Loading...');
+    row.append(value);
+    const actions = document.createElement('div');
+    actions.className = 'bh-actions-row';
+    actions.setAttribute('slot', 'trailing');
+    actions.innerHTML = `
+      <md-text-button id="bh-refresh-cache-btn" class="bh-pill-button">
+        <md-icon slot="icon" aria-hidden="true">refresh</md-icon>
+        ${t('boot_hash_refresh_btn', 'Refresh')}
+      </md-text-button>
+      <md-filled-tonal-button id="bh-clear-cache-btn" class="bh-pill-button" ${!cachedHash ? 'disabled' : ''}>
+        <md-icon slot="icon" aria-hidden="true">delete_sweep</md-icon>
+        ${t('boot_hash_clear_cache', 'Clear Cache')}
+      </md-filled-tonal-button>
+    `;
+    row.append(actions);
+    container.replaceWith(row);
+    cacheMount = row;
+    cacheHashEl = value;
+    clearCacheBtn = row.querySelector('#bh-clear-cache-btn');
+    const refreshBtn = row.querySelector('#bh-refresh-cache-btn');
+
+    clearCacheBtn?.addEventListener('click', async () => {
+      if (moddir) {
+        await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --clear-cache 2>/dev/null || rm -f /data/adb/specter/boot_hash 2>/dev/null || true`);
+      }
+      if (cacheHashEl) {
+        cacheHashEl.textContent = t('boot_hash_cache_empty', 'None');
+      }
+      clearCacheBtn?.setAttribute('disabled', '');
+      showToast(t('boot_hash_cache_cleared', 'Cache cleared'), {
+        icon: 'check_circle',
+        type: 'success',
+        autoCloseDelay: 2500,
+      });
+    });
+
+    refreshBtn?.addEventListener('click', async () => {
+      if (refreshBtn) refreshBtn.setAttribute('disabled', '');
+      try {
+        if (moddir) {
+          await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --refresh 2>/dev/null || true`);
+          try {
+            const { stdout: actOut } = await exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
+            if (activeHashEl) activeHashEl.textContent = actOut.trim() || t('boot_hash_active_empty', 'None');
+          } catch {}
+          try {
+            const { stdout: cOut } = await exec('cat /data/adb/specter/boot_hash 2>/dev/null || true');
+            const cVal = cOut.trim();
+            if (cacheHashEl) {
+              cacheHashEl.textContent = cVal || t('boot_hash_cache_empty', 'None');
+            }
+            if (cVal) clearCacheBtn?.removeAttribute('disabled');
+          } catch {}
+        }
+        showToast(t('boot_hash_refreshed', 'Refreshed'), {
+          icon: 'check_circle',
+          type: 'success',
+          autoCloseDelay: 2500,
+        });
+      } catch {
+        showToast(t('simple_toast_error', 'Failed'), {
+          icon: 'error',
+          type: 'error',
+          autoCloseDelay: 3000,
+        });
+      } finally {
+        if (refreshBtn) refreshBtn.removeAttribute('disabled');
+      }
+    });
+  };
   await openSubPage({
     id: 'boot-hash',
     title: t('boot_hash_title', 'Boot Hash'),
@@ -47,27 +209,31 @@ export async function openBootHashSubpage() {
       `;
       const clearBtn = container.querySelector('#bh-clear-btn') as HTMLElement | null;
       clearBtn?.addEventListener('click', async () => {
-        cfgSet('custom_boot_hash', '');
-        if (hashInputEl) hashInputEl.value = '';
-        if (moddir) {
-          await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --refresh 2>/dev/null || true`);
-          try {
-            const { stdout: actOut } = await exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
-            if (activeHashEl) activeHashEl.textContent = actOut.trim() || t('boot_hash_active_empty', 'None');
-          } catch {}
-          try {
-            const { stdout: cOut } = await exec('cat /data/adb/specter/boot_hash 2>/dev/null || true');
-            const cVal = cOut.trim();
-            if (cacheHashEl) {
-              cacheHashEl.textContent = cVal || t('boot_hash_cache_empty', 'None');
-            }
-            if (clearCacheBtn) {
-              if (cVal) clearCacheBtn.removeAttribute('disabled');
-              else clearCacheBtn.setAttribute('disabled', '');
-            }
-          } catch {}
+        try {
+          await cfgSet('custom_boot_hash', '');
+          if (hashInputEl) hashInputEl.value = '';
+          if (moddir) {
+            await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --refresh 2>/dev/null || true`);
+            try {
+              const { stdout: actOut } = await exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
+              if (activeHashEl) activeHashEl.textContent = actOut.trim() || t('boot_hash_active_empty', 'None');
+            } catch {}
+            try {
+              const { stdout: cOut } = await exec('cat /data/adb/specter/boot_hash 2>/dev/null || true');
+              const cVal = cOut.trim();
+              if (cacheHashEl) {
+                cacheHashEl.textContent = cVal || t('boot_hash_cache_empty', 'None');
+              }
+              if (clearCacheBtn) {
+                if (cVal) clearCacheBtn.removeAttribute('disabled');
+                else clearCacheBtn.setAttribute('disabled', '');
+              }
+            } catch {}
+          }
+          showToast(t('boot_hash_cleared', 'Custom hash cleared'), { icon: 'check_circle', type: 'success', autoCloseDelay: 2500 });
+        } catch {
+          showToast(t('simple_toast_error', 'Failed'), { icon: 'error', type: 'error', autoCloseDelay: 3000 });
         }
-        showToast(t('boot_hash_cleared', 'Custom hash cleared'), { icon: 'check_circle', type: 'success', autoCloseDelay: 2500 });
       });
     },
     groups: [
@@ -77,43 +243,46 @@ export async function openBootHashSubpage() {
           {
             type: 'custom',
             id: 'bh-custom-input-card',
-            render: (container, _isEnabled, posClass) => {
-              container.innerHTML = `
-                <div class="list-item ${posClass || 'list-item--only'}" style="flex-direction: column; align-items: stretch; gap: 8px; cursor: default; padding: 14px 16px;">
-                  <div style="display: flex; align-items: center; gap: 14px;">
-                    <div class="li-icon"><md-icon aria-hidden="true">tag</md-icon></div>
-                    <div class="list-item-content">
-                      <div class="toggle-text">${t('boot_hash_custom_title', 'Custom Hash')}</div>
-                      <span class="supporting-text">${t('boot_hash_custom_desc', 'Spoof custom SHA-256 digest')}</span>
-                    </div>
-                  </div>
-                  <div class="subpage-text-input-wrap">
-                    <input
-                      type="text"
-                      id="bh-input"
-                      class="subpage-full-input"
-                      style="font-family: monospace; font-size: 0.8125rem; font-variant-ligatures: none;"
-                      maxlength="64"
-                      autocapitalize="none"
-                      autocomplete="off"
-                      spellcheck="false"
-                      placeholder="${t('boot_hash_placeholder', 'Empty for auto')}"
-                      value="${savedCustom}"
-                      aria-label="${t('boot_hash_custom_title', 'Custom Hash')}"
-                    />
-                    <md-icon-button id="bh-paste-btn" aria-label="${t('kb_paste_aria', 'Paste from clipboard')}">
-                      <md-icon aria-hidden="true">content_paste</md-icon>
-                    </md-icon-button>
-                    <md-icon-button id="bh-zero-btn" aria-label="${t('boot_hash_zero_aria', 'Set to zeros')}">
-                      <md-icon aria-hidden="true">restart_alt</md-icon>
-                    </md-icon-button>
-                  </div>
-                </div>
+            render: (container, _isEnabled) => {
+              const row = document.createElement('sp-settings-row');
+              row.setAttribute('variant', 'custom');
+              row.setAttribute('stacked', '');
+              row.setAttribute('headline', t('boot_hash_custom_title', 'Custom Hash'));
+              row.setAttribute('supporting-text', t('boot_hash_custom_desc', 'Spoof custom SHA-256 digest'));
+              const icon = document.createElement('md-icon');
+              icon.setAttribute('slot', 'icon');
+              icon.setAttribute('aria-hidden', 'true');
+              icon.textContent = 'tag';
+              row.append(icon);
+              const wrap = document.createElement('div');
+              wrap.className = 'subpage-text-input-wrap';
+              wrap.setAttribute('slot', 'trailing');
+              wrap.innerHTML = `
+                <input
+                  type="text"
+                  id="bh-input"
+                  class="subpage-full-input bh-mono"
+                  maxlength="64"
+                  autocapitalize="none"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="${t('boot_hash_placeholder', 'Empty for auto')}"
+                  value="${escapeHtml(savedCustom)}"
+                  aria-label="${t('boot_hash_custom_title', 'Custom Hash')}"
+                />
+                <md-icon-button id="bh-paste-btn" aria-label="${t('kb_paste_aria', 'Paste from clipboard')}">
+                  <md-icon aria-hidden="true">content_paste</md-icon>
+                </md-icon-button>
+                <md-icon-button id="bh-zero-btn" aria-label="${t('boot_hash_zero_aria', 'Set to zeros')}">
+                  <md-icon aria-hidden="true">restart_alt</md-icon>
+                </md-icon-button>
               `;
+              row.append(wrap);
+              container.replaceWith(row);
 
-              hashInputEl = container.querySelector('#bh-input');
-              const pasteBtn = container.querySelector('#bh-paste-btn');
-              const zeroBtn = container.querySelector('#bh-zero-btn');
+              hashInputEl = row.querySelector('#bh-input');
+              const pasteBtn = row.querySelector('#bh-paste-btn');
+              const zeroBtn = row.querySelector('#bh-zero-btn');
 
               pasteBtn?.addEventListener('click', async () => {
                 try {
@@ -139,97 +308,12 @@ export async function openBootHashSubpage() {
           {
             type: 'custom',
             id: 'bh-active-status-card',
-            render: (container, _isEnabled, posClass) => {
-              container.innerHTML = `
-                <div class="list-item ${posClass || 'list-item--first'}" style="flex-direction: column; align-items: stretch; gap: 4px; cursor: default; padding: 14px 16px;">
-                  <div style="display: flex; align-items: center; gap: 14px;">
-                    <div class="li-icon"><md-icon aria-hidden="true">verified_user</md-icon></div>
-                    <div class="list-item-content">
-                      <div class="toggle-text">${t('boot_hash_active_label', 'Active (ro.boot.vbmeta.digest)')}</div>
-                      <span class="supporting-text" id="bh-active-val" style="font-family: monospace; font-size: 0.8125rem; font-variant-ligatures: none; word-break: break-all; margin-top: 4px; display: block; color: var(--md-sys-color-primary);">
-                        ${activeHash || t('boot_hash_active_empty', 'None')}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              `;
-              activeHashEl = container.querySelector('#bh-active-val');
-            },
+            render: (container, _isEnabled) => { renderActiveStatus(container); },
           },
           {
             type: 'custom',
             id: 'bh-cache-status-card',
-            render: (container, _isEnabled, posClass) => {
-              container.innerHTML = `
-                <div class="list-item ${posClass || 'list-item--last'}" style="flex-direction: column; align-items: stretch; gap: 8px; cursor: default; padding: 14px 16px;">
-                  <div style="display: flex; align-items: center; gap: 14px;">
-                    <div class="li-icon"><md-icon aria-hidden="true">storage</md-icon></div>
-                    <div class="list-item-content" style="flex: 1; min-width: 0;">
-                      <div class="toggle-text">${t('boot_hash_cache_title', 'Cached Hash')}</div>
-                      <span class="supporting-text" id="bh-cache-val" style="font-family: monospace; font-size: 0.8125rem; font-variant-ligatures: none; word-break: break-all; margin-top: 4px; display: block;">
-                        ${cachedHash || t('boot_hash_cache_empty', 'None')}
-                      </span>
-                    </div>
-                  </div>
-                  <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 4px;">
-                    <md-text-button id="bh-refresh-cache-btn" style="--md-text-button-container-shape: 9999px;">
-                      <md-icon slot="icon" aria-hidden="true">refresh</md-icon>
-                      ${t('boot_hash_refresh_btn', 'Refresh')}
-                    </md-text-button>
-                    <md-filled-tonal-button id="bh-clear-cache-btn" style="--md-filled-tonal-button-container-shape: 9999px; border-radius: 9999px;" ${!cachedHash ? 'disabled' : ''}>
-                      <md-icon slot="icon" aria-hidden="true">delete_sweep</md-icon>
-                      ${t('boot_hash_clear_cache', 'Clear Cache')}
-                    </md-filled-tonal-button>
-                  </div>
-                </div>
-              `;
-              cacheHashEl = container.querySelector('#bh-cache-val');
-              clearCacheBtn = container.querySelector('#bh-clear-cache-btn');
-              const refreshBtn = container.querySelector('#bh-refresh-cache-btn');
-
-              clearCacheBtn?.addEventListener('click', async () => {
-                if (moddir) {
-                  await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --clear-cache 2>/dev/null || rm -f /data/adb/specter/boot_hash 2>/dev/null || true`);
-                }
-                if (cacheHashEl) {
-                  cacheHashEl.textContent = t('boot_hash_cache_empty', 'None');
-                }
-                clearCacheBtn?.setAttribute('disabled', '');
-                showToast(t('boot_hash_cache_cleared', 'Cache cleared'), {
-                  icon: 'check_circle',
-                  type: 'success',
-                  autoCloseDelay: 2500,
-                });
-              });
-
-              refreshBtn?.addEventListener('click', async () => {
-                if (refreshBtn) refreshBtn.setAttribute('disabled', '');
-                try {
-                  if (moddir) {
-                    await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --refresh 2>/dev/null || true`);
-                    try {
-                      const { stdout: actOut } = await exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
-                      if (activeHashEl) activeHashEl.textContent = actOut.trim() || t('boot_hash_active_empty', 'None');
-                    } catch {}
-                    try {
-                      const { stdout: cOut } = await exec('cat /data/adb/specter/boot_hash 2>/dev/null || true');
-                      const cVal = cOut.trim();
-                      if (cacheHashEl) {
-                        cacheHashEl.textContent = cVal || t('boot_hash_cache_empty', 'None');
-                      }
-                      if (cVal) clearCacheBtn?.removeAttribute('disabled');
-                    } catch {}
-                  }
-                  showToast(t('boot_hash_refreshed', 'Refreshed'), {
-                    icon: 'check_circle',
-                    type: 'success',
-                    autoCloseDelay: 2500,
-                  });
-                } finally {
-                  if (refreshBtn) refreshBtn.removeAttribute('disabled');
-                }
-              });
-            },
+            render: (container, _isEnabled) => { renderCacheStatus(container); },
           },
         ],
       },
@@ -242,7 +326,7 @@ export async function openBootHashSubpage() {
         'Fixes ro.boot.vbmeta.digest by syncing with hardware TEE attestation, or applies custom hash when set.'
       ),
     },
-    fab: (container, instance) => {
+    fab: (container) => {
       container.innerHTML = `
         <md-fab variant="primary" class="subpage-fab" id="bh-save-fab" label="${t('dialog_save', 'Save')}">
           <md-icon slot="icon" aria-hidden="true">save</md-icon>
@@ -262,20 +346,22 @@ export async function openBootHashSubpage() {
         }
 
         saveFab.setAttribute('disabled', '');
+        const loadingToast = showLoadingToast(t('common_loading', 'Loading...'));
+        await afterNextPaint();
         try {
-          cfgSet('custom_boot_hash', val);
+          await cfgSet('custom_boot_hash', val);
           if (moddir) {
             if (val) {
-              await exec(`su -c "resetprop -n ro.boot.vbmeta.digest ${shellEscape(val)}" 2>/dev/null || resetprop -n ro.boot.vbmeta.digest ${shellEscape(val)} 2>/dev/null || true`);
+              await spawnCommand(`su -c "resetprop -n ro.boot.vbmeta.digest ${shellEscape(val)}" 2>/dev/null || resetprop -n ro.boot.vbmeta.digest ${shellEscape(val)} 2>/dev/null || true`);
             } else {
-              await exec(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --refresh 2>/dev/null || true`);
+              await spawnCommand(`sh ${shellEscape(moddir + '/features/boot_hash.sh')} --refresh 2>/dev/null || true`);
             }
             try {
-              const { stdout } = await exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
+              const { stdout } = await spawnCommand('resetprop ro.boot.vbmeta.digest 2>/dev/null || true');
               if (activeHashEl) activeHashEl.textContent = stdout.trim() || t('boot_hash_active_empty', 'None');
             } catch {}
             try {
-              const { stdout: cOut } = await exec('cat /data/adb/specter/boot_hash 2>/dev/null || true');
+              const { stdout: cOut } = await spawnCommand('cat /data/adb/specter/boot_hash 2>/dev/null || true');
               const cVal = cOut.trim();
               if (cacheHashEl) {
                 cacheHashEl.textContent = cVal || t('boot_hash_cache_empty', 'None');
@@ -286,14 +372,13 @@ export async function openBootHashSubpage() {
               }
             } catch {}
           }
-          showToast(t('boot_hash_saved', 'Saved'), {
+          updateToast(loadingToast, t('boot_hash_saved', 'Saved'), {
             icon: 'check_circle',
             type: 'success',
             autoCloseDelay: 2500,
           });
-          instance.close();
         } catch {
-          showToast(t('simple_toast_error', 'Failed'), {
+          updateToast(loadingToast, t('simple_toast_error', 'Failed'), {
             icon: 'error',
             type: 'error',
             autoCloseDelay: 3000,
@@ -304,12 +389,28 @@ export async function openBootHashSubpage() {
       });
     },
   });
-}
 
-export function wireBootHash() {
-  wireRowDialog('toggle-boot_hash-row', openBootHashSubpage);
-  const toolsBtn = document.getElementById('boot-hash-btn');
-  if (toolsBtn) {
-    toolsBtn.addEventListener('click', openBootHashSubpage);
-  }
+  const loadStatus = async () => {
+    // First let the opened page and its skeletons paint, then start the
+    // reads; starting them in the same task as the opening can block that
+    // first paint.
+    await new Promise<void>(resolve => afterPaint(resolve, 300));
+
+    const [activeOut, cachedOut] = await Promise.all([
+      exec('resetprop ro.boot.vbmeta.digest 2>/dev/null || true')
+        .then(result => result.stdout.trim())
+        .catch(() => ''),
+      exec('cat /data/adb/specter/boot_hash 2>/dev/null || true')
+        .then(result => result.stdout.trim())
+        .catch(() => ''),
+    ]);
+    activeHash = activeOut;
+    cachedHash = cachedOut;
+    statusLoaded = true;
+
+    if (activeMount) renderActiveStatus(activeMount);
+    if (cacheMount) renderCacheStatus(cacheMount);
+  };
+
+  void loadStatus();
 }
